@@ -23,7 +23,7 @@ void download_and_extract() {
     system(command);
 
     printf("📦 Mengekstrak Clues.zip...\n");
-    system("unzip -o Clues.zip -d Clues");
+    system("unzip -o Clues.zip");
     remove(ZIP_NAME);
 }
 
@@ -36,7 +36,7 @@ int is_valid_file(const char *filename) {
 void filter_files() {
     system("mkdir -p Filtered");
 
-    const char *dirs[] = {"Clues/Clues/ClueA", "Clues/Clues/ClueB", "Clues/Clues/ClueC", "Clues/Clues/ClueD"};
+    const char *dirs[] = {"Clues/ClueA", "Clues/ClueB", "Clues/ClueC", "Clues/ClueD"};
 
     for (int i = 0; i < 4; ++i) {
         DIR *dir = opendir(dirs[i]);
