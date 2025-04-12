@@ -10,6 +10,7 @@
 #include <signal.h>
 #include <errno.h>
 #include <libgen.h>
+#include <sys/wait.h>
 
 #define STARTER_DIR "starter_kit"
 #define QUARANTINE_DIR "quarantine"
@@ -36,18 +37,46 @@ char* base64_decode(const char* input) {
     static char output[MAX_NAME_LEN];
     memset(output, 0, sizeof(output));
 
-    char command[MAX_PATH_LEN];
-    snprintf(command, sizeof(command), "echo %s | base64 -d 2>/dev/null", input);
+    int pipefd[2];
+    if (pipe(pipefd) == -1) return NULL;
 
-    FILE *fp = popen(command, "r");
-    if (!fp) return NULL;
+    pid_t pid = fork();
+    if (pid == -1) return NULL;
 
-    fgets(output, sizeof(output), fp);
-    pclose(fp);
+    if (pid == 0) {
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        close(pipefd[1]);
 
-    output[strcspn(output, "\r\n")] = 0;
-    return output;
+        char *argv[] = {"base64", "-d", NULL};
+        char *envp[] = {NULL};
+
+        int inpipe[2];
+        pipe(inpipe);
+        pid_t inpid = fork();
+        if (inpid == 0) {
+            close(inpipe[1]);
+            dup2(inpipe[0], STDIN_FILENO);
+            close(inpipe[0]);
+            execve("/usr/bin/base64", argv, envp);
+            exit(1);
+        } else {
+            close(inpipe[0]);
+            write(inpipe[1], input, strlen(input));
+            close(inpipe[1]);
+            waitpid(inpid, NULL, 0);
+            exit(0);
+        }
+    } else {
+        close(pipefd[1]);
+        read(pipefd[0], output, MAX_NAME_LEN - 1);
+        close(pipefd[0]);
+        waitpid(pid, NULL, 0);
+        output[strcspn(output, "\r\n")] = 0;
+        return output;
+    }
 }
+
 
 int is_base64_filename(const char *name) {
     int len = strlen(name);
