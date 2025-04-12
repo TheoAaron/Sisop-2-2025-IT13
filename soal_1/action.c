@@ -3,11 +3,25 @@
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 #include <ctype.h>
+#include <fcntl.h>
+#include <sys/wait.h>
 
 #define ZIP_NAME "Clues.zip"
-#define ZIP_URL "https://drive.google.com/uc\\?export\\=download\\&id\\=1xFn1OBJUuSdnApDseEczKhtNzyGekauK"
+#define ZIP_URL "https://drive.google.com/uc?export=download&id=1xFn1OBJUuSdnApDseEczKhtNzyGekauK"
+
+void run_exec(char *cmd, char *argv[]) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        execvp(cmd, argv);
+        perror("exec failed");
+        exit(EXIT_FAILURE);
+    } else {
+        wait(NULL);
+    }
+}
 
 void download_and_extract() {
     struct stat st = {0};
@@ -18,13 +32,14 @@ void download_and_extract() {
     }
 
     printf("⬇️  Mengunduh Clues.zip...\n");
-    char command[1024];
-    snprintf(command, sizeof(command), "wget -q --show-progress -O %s %s", ZIP_NAME, ZIP_URL);
-    system(command);
+    char *wget_args[] = {"wget", "-q", "--show-progress", "-O", ZIP_NAME, ZIP_URL, NULL};
+    run_exec("wget", wget_args);
 
     printf("📦 Mengekstrak Clues.zip...\n");
-    system("unzip -o Clues.zip");
-    remove(ZIP_NAME);
+    char *unzip_args[] = {"unzip", "-o", ZIP_NAME, NULL};
+    run_exec("unzip", unzip_args);
+
+    unlink(ZIP_NAME);
 }
 
 int is_valid_file(const char *filename) {
@@ -33,8 +48,14 @@ int is_valid_file(const char *filename) {
            strcmp(filename + 1, ".txt") == 0;
 }
 
+void move_file(const char *src, const char *dest_dir) {
+    char dest_path[512];
+    snprintf(dest_path, sizeof(dest_path), "%s/%s", dest_dir, strrchr(src, '/') + 1);
+    rename(src, dest_path);
+}
+
 void filter_files() {
-    system("mkdir -p Filtered");
+    mkdir("Filtered", 0755);
 
     const char *dirs[] = {"Clues/ClueA", "Clues/ClueB", "Clues/ClueC", "Clues/ClueD"};
 
@@ -48,13 +69,10 @@ void filter_files() {
         while ((entry = readdir(dir))) {
             if (entry->d_type == DT_REG) {
                 snprintf(filepath, sizeof(filepath), "%s/%s", dirs[i], entry->d_name);
-
                 if (is_valid_file(entry->d_name)) {
-                    char move_cmd[1024];
-                    snprintf(move_cmd, sizeof(move_cmd), "mv '%s' Filtered/", filepath);
-                    system(move_cmd);
+                    move_file(filepath, "Filtered");
                 } else {
-                    remove(filepath);
+                    unlink(filepath);
                 }
             }
         }
@@ -100,7 +118,7 @@ void combine_files() {
 
     FILE *out = fopen("Combined.txt", "w");
     if (!out) {
-        perror("❌ Gagal membuat Combined.txt");
+        perror("❌ Gagal membuat Combined.txt\n");
         return;
     }
 
@@ -114,7 +132,7 @@ void combine_files() {
                 char ch;
                 while ((ch = fgetc(f)) != EOF) fputc(ch, out);
                 fclose(f);
-                remove(path);
+                unlink(path);
             }
             free(digit_files[i]);
             i++;
@@ -127,7 +145,7 @@ void combine_files() {
                 char ch;
                 while ((ch = fgetc(f)) != EOF) fputc(ch, out);
                 fclose(f);
-                remove(path);
+                unlink(path);
             }
             free(alpha_files[j]);
             j++;
@@ -163,7 +181,7 @@ void decode_file() {
 }
 
 void show_usage() {
-    printf("📘 Penggunaan:\n");
+    printf("📘 Penggunaan:");
     printf("./action                # Download dan ekstrak Clues.zip\n");
     printf("./action -m Filter      # Filter file .txt valid ke folder Filtered/\n");
     printf("./action -m Combine     # Gabung isi file .txt ke Combined.txt\n");
