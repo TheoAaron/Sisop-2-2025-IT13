@@ -854,3 +854,6 @@ Contoh potongan code:
 
 ## REVISI
 
+![Image](https://github.com/user-attachments/assets/b8431dfd-d7a3-44b4-8e97-f5f41934ccaf)
+
+Untuk revisi, kemarin ketika akan menjalankan command untuk revert user terjadi eror yang sangat panjang, untuk sekarang sudah berhasil seperti image yang disertakan.
