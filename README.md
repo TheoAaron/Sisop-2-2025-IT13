@@ -591,7 +591,8 @@ membuat anak proses dengan nama rodok.exe
 
 membuat anak proses dari rodok.exe dengan nama dinamis miner proses. Kemudian memanggil fungsi mining.
 
-##REVISI
+## REVISI
+
 mohon maaf mas sebelumnya kode saya yang menyebarkan biner itu bisa, tetapi kemarin waktu demo itu ngga bisa karena linux saya kena malware saya sendiri. 
 
 ![Image](https://github.com/user-attachments/assets/e7f5b45b-b7ae-4e46-a507-04cdd7963475)
