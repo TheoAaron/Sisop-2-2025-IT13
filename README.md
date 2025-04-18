@@ -600,3 +600,257 @@ mohon maaf mas sebelumnya kode saya yang menyebarkan biner itu bisa, tetapi kema
 buktinya seperti di atas mas
 
 # Soal 4
+
+DebugMon - Alat Pemantauan dan Manajemen Proses
+
+DebugMon adalah utilitas berbasis bahasa C yang dirancang untuk memantau, mencatat, dan mengelola proses milik pengguna tertentu pada sistem Linux. Program ini mendukung listing proses, menjalankan daemon untuk pencatatan berkala, menghentikan daemon, menghentikan proses pengguna, dan mengembalikan proses yang gagal dijalankan.
+
+---
+
+## Fitur Utama
+
+- **List Proses**: Menampilkan semua proses yang berjalan milik pengguna tertentu, termasuk PID, perintah, waktu CPU, dan penggunaan memori.
+- **Mode Daemon**: Menjalankan program sebagai daemon di latar belakang yang secara berkala mencatat status proses pengguna.
+- **Stop Daemon**: Menghentikan daemon yang sedang berjalan untuk pengguna tersebut.
+- **Fail User Processes**: Menghentikan semua proses milik pengguna dan mencatat status penghentian.
+- **Revert Processes**: Menghidupkan kembali proses yang sebelumnya dihentikan dan tercatat sebagai gagal.
+
+---
+
+## Cara Penggunaan
+
+    ---
+    ./debugmon <command> <username>
+    ---
+
+Dimana `<perintah>` dapat berupa:
+
+- `list`   : Menampilkan daftar proses pengguna.
+- `daemon` : Menjalankan daemon pemantauan proses.
+- `stop`   : Menghentikan daemon yang berjalan.
+- `fail`   : Menghentikan semua proses pengguna dan mencatatnya.
+- `revert` : Menghidupkan kembali proses yang gagal.
+
+---
+
+## Penjelasan Komponen Utama
+
+- **Listing Proses**
+
+  Membaca direktori `/proc` untuk mendapatkan daftar PID, memfilter berdasarkan pemilik proses sesuai username, lalu mengambil informasi:
+
+  - Command line dari `/proc/[pid]/cmdline`
+  - Waktu CPU (user + system) dari `/proc/[pid]/stat`
+  - Penggunaan memori dalam KB dari `/proc/[pid]/statm`
+
+  Command :
+  
+      ---
+      ./debugmon list <username>
+      ---
+
+
+  Contoh potongan kode:
+
+      ---
+      void list_processes(const char *username, FILE *out) {
+        DIR *proc = opendir("/proc");
+        if (!proc) {
+        fprintf(out, "Failed to open /proc\n");
+        return;
+        }
+
+        char hdr_time[TIME_BUF_SIZE];
+        get_formatted_time(hdr_time, sizeof(hdr_time), "%Y-%m-%d %H:%M:%S");
+        fprintf(out, "\n=== PROCESS LIST %s ===\n", hdr_time);
+        fprintf(out, "PID\tCOMMAND\tCPU_TIME\tMEM_KB\n");
+
+        struct dirent *entry;
+        while ((entry = readdir(proc)) != NULL) {
+        if (!is_numeric(entry->d_name)) continue;
+
+        // Filter by process owner matching username
+        // Read /proc/[pid]/status for UID and compare
+        // Read command line from /proc/[pid]/cmdline
+        // Read CPU times from /proc/[pid]/stat
+        // Read memory pages from /proc/[pid]/statm
+
+        // Calculate total CPU time and memory in KB
+        // Print process info to output
+        // Log global process status as "RUNNING"
+        }
+
+        closedir(proc);
+        }
+
+      ---
+  
+- **Mode Daemon**
+
+Membuat proses anak yang berjalan di latar belakang, memutus hubungan dengan terminal, dan setiap 5 detik mencatat status proses pengguna ke file log global, command :
+
+      ---
+      ./debugmon daemon <username>
+      ---
+
+contoh potongan code:
+
+      ---
+      void daemon_mode(const char *username) {
+    pid_t pid = fork();
+    if (pid < 0) { perror("fork"); exit(1); }
+    if (pid > 0) {
+        // Parent writes daemon PID to a file and exits
+        return;
+    }
+
+    setsid(); // Create new session
+    close(STDIN_FILENO);
+    close(STDOUT_FILENO);
+    close(STDERR_FILENO);
+
+    while (1) {
+        FILE *lf = fopen(LOG_DIR "debugmon.log", "a");
+        if (lf) {
+            list_processes(username, lf);
+            fclose(lf);
+        }
+        sleep(5);
+    }
+    }
+
+      ---
+
+- **Menghentikan Daemon**
+
+Membaca file PID daemon dan mengirim sinyal SIGTERM untuk menghentikan daemon, command :
+
+      ---
+      ./debugmon stop <username>
+      ---
+
+COntoh potongan code:
+
+      ---
+      void stop_daemon(const char *username) {
+    char pid_path[256];
+    snprintf(pid_path, sizeof(pid_path), "/home/ubuntu/debugmon_%s.pid", username);
+
+    FILE *pf = fopen(pid_path, "r");
+    if (!pf) {
+        printf("Daemon not running for %s\n", username);
+        return;
+    }
+    pid_t pid;
+    if (fscanf(pf, "%d", &pid) != 1) {
+        fclose(pf);
+        printf("Corrupt PID file for %s\n", username);
+        return;
+    }
+    fclose(pf);
+
+    if (kill(pid, SIGTERM) == 0) {
+        printf("Stopped daemon for %s (PID %d)\n", username, pid);
+        remove(pid_path);
+    } else {
+        perror("Failed to stop daemon");
+    }
+    }
+
+      ---
+
+- **Menyabotase Daemon**
+  
+Menghentikan semua proses pengguna dan mencatat semua statusnya menjadi TERMINATED, menggunakan command :
+
+      ---
+      ./debugmon fail <username>
+      ---
+
+Contoh potongan code:
+
+      ---
+    void fail_user(const char *username) {
+    DIR *proc = opendir("/proc");
+    if (!proc) { perror("open /proc"); return; }
+
+    char log_path[256];
+    snprintf(log_path, sizeof(log_path), LOG_DIR "debugmon_%s.log", username);
+    FILE *lf = fopen(log_path, "a");
+    if (!lf) { perror("open log"); closedir(proc); return; }
+
+    // Write header with timestamp
+    fprintf(lf, "\n=== FAILED PROCESSES %s ===\n", current_time_str);
+    fprintf(lf, "PID\tCOMMAND\tSTATUS\n");
+
+    struct dirent *entry;
+    while ((entry = readdir(proc)) != NULL) {
+        if (!is_numeric(entry->d_name)) continue;
+
+        // Filter by user ownership
+        // Read command line
+        // Send SIGKILL to process
+        // Log termination status accordingly
+        // Log global status "FAILED"
+    }
+
+    fclose(lf);
+    closedir(proc);
+    printf("All processes for %s terminated and logged\n", username);
+    }
+
+      ---
+
+- **Menyabotase Daemon**
+
+Menghidupkan kembali semua proses yang telah gagal, menggunakan command berikut:
+
+        ---
+        ./debugmon revert <username>
+        ---
+
+Contoh potongan code:
+
+      ---
+    void revert_user(const char *username) {
+    char log_path[256];
+    snprintf(log_path, sizeof(log_path), LOG_DIR "debugmon_%s.log", username);
+
+    FILE *lf = fopen(log_path, "r");
+    if (!lf) {
+        printf("No log file for %s\n", username);
+        return;
+    }
+
+    int reverted = 0;
+    char line[2048];
+    int in_failed_section = 0;
+
+    while (fgets(line, sizeof(line), lf)) {
+        if (strstr(line, "=== FAILED PROCESSES")) {
+            in_failed_section = 1;
+            continue;
+        }
+        if (in_failed_section) {
+            if (strncmp(line, "PID\tCOMMAND\tSTATUS", 19) == 0 || line[0] == '\n') continue;
+
+            // Parse PID and command
+            // Fork and exec command line
+            // Wait for child and increment reverted count
+        }
+    }
+
+    fclose(lf);
+    printf("Successfully reverted %d processes for %s\n", reverted, username);
+    }
+
+      ---
+      
+## Catatan Penting
+
+- File log disimpan di `/home/ubuntu/debugmon_logs/`.
+- File PID daemon disimpan di `/home/ubuntu/debugmon_<username>.pid`.
+
+
+## REVISI
+
