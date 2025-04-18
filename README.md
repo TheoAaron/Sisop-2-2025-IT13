@@ -548,6 +548,54 @@ menjadi:
 
 # Soal 3
 ![Image](https://github.com/user-attachments/assets/1921a38f-d315-4801-ae06-188992c9c04a)
+
 kode di atas menjelaskan fungsi generate hash, untuk set random hash hexadecimal
+
+![Image](https://github.com/user-attachments/assets/2ae357ef-eff4-4cba-9540-96e217efc570)
+
+untuk kode di atas menjelaskan fungsi proses miner, dengan mengatur nama miner secara dinamis terlebih dahulu. Kemudian melakukan while loop true dengan set random waktu untuk sleep antara 3 - 30 detik. Langkah berikutnya memanggil fungsi generate hash. dalam fungsi tersebut juga mengambil waktu saat ini yang disimpan dalam string timestamp, lalu akan set nama dinamis dan menulis ke log file.
+
+![Image](https://github.com/user-attachments/assets/93ab8095-c05d-4f56-82c4-7425b4a03929)
+
+kode di atas merupakan fungsi untuk menyebarkan binary nya dengan nama malware. Melakukan while loop dengan kondisi `while ((entry = readdir(dir)) != NULL)` untuk membaca dir. setelah itu, fungsi while loop tsb akan melewati direktori . dan .. agar tidak terkena penyebaran biner nya sendiri. `snprintf` untuk set target path dalam penyebaran biner. Lalu melakukan penyalinan dengan memanggil `cp`.
+
+![Image](https://github.com/user-attachments/assets/3c503dec-fe78-4463-a05c-bf1bc022a9fb)
+
+kode di atas untuk fungsi encrypt file. Fungsi tsb diawali dengan membaca file tersebut dengan `fopen`. lalu melakukan pengukuran file. `buffer[i] ^= XOR_KEY;` digunakan untuk mengubah buffer menjadi encrypt dengan XOR KEY. `fwrite` digunakan untuk menulis encrypt ke file sebelumnya.
+
+![Image](https://github.com/user-attachments/assets/e855955c-d449-44a7-99b5-65c83f8ca8de)
+
+kode di atas untuk fungsi proses direktori dalam proses encrypt file. Langkah pertama nya yaitu set fullpath nya. dan cek apakah fullpath merupakan direktori atau file, jika direktori maka akan running `process_directory(full_path);` apabila file maka akan running `encrypt_file(full_path);`
+
+`void wannacryptor_process()` kode disamping untuk set mulai direktori sekarang dalam encrypt file.
+
+`int main(int argc, char *argv[])` masuk ke main process dengan parameter untuk mengganti nama anak proses.
+
+![Image](https://github.com/user-attachments/assets/ffeb512f-15eb-4892-8601-64f65954876c)
+
+kode di atas untuk membuat parent process
+
+![Image](https://github.com/user-attachments/assets/e564eb96-bb2d-4eba-8161-19ef18c863f5)
+
+kode di atas untuk memanggil fungsi wannacryptor dengan menamainya menjadi wannacryptor proses di daemon.
+
+![Image](https://github.com/user-attachments/assets/e7ef3988-1779-4241-8e37-4599ce008f42)
+
+kode di atas untuk memanggil fungsi trojan(menyebarkan biner).
+
+![Image](https://github.com/user-attachments/assets/9586fa1d-edda-48b8-9a5d-f6f40c854a5c)
+
+membuat anak proses dengan nama rodok.exe
+
+![Image](https://github.com/user-attachments/assets/68331ec4-336b-4ccd-aab9-3897b558341f)
+
+membuat anak proses dari rodok.exe dengan nama dinamis miner proses. Kemudian memanggil fungsi mining.
+
+##REVISI
+mohon maaf mas sebelumnya kode saya yang menyebarkan biner itu bisa, tetapi kemarin waktu demo itu ngga bisa karena linux saya kena malware saya sendiri. 
+
+![Image](https://github.com/user-attachments/assets/e7f5b45b-b7ae-4e46-a507-04cdd7963475)
+
+buktinya seperti di atas mas
 
 # Soal 4
