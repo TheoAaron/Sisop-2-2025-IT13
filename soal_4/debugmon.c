@@ -18,7 +18,7 @@
 
 int is_numeric(const char *str) {
     for (int i = 0; str[i]; i++) {
-        if (!isdigit(str[i])) return 0;
+        if (!isdigit((unsigned char)str[i])) return 0;
     }
     return 1;
 }
@@ -30,17 +30,16 @@ void get_formatted_time(char *buffer, size_t size, const char *format) {
 }
 
 void log_global_process_status(const char *process_name, const char *status) {
-    char time_str[32];
-    get_formatted_time(time_str, sizeof(time_str), "%d:%m:%Y-%H:%M:%S");
+    char time_str[TIME_BUF_SIZE];
+    get_formatted_time(time_str, sizeof(time_str), "[%d:%m:%Y-%H:%M:%S]");
 
-    char log_path[256];
-    snprintf(log_path, sizeof(log_path), LOG_DIR "debugmon.log");
+    char path[256];
+    snprintf(path, sizeof(path), LOG_DIR "debugmon.log");
 
-    FILE *log_fp = fopen(log_path, "a");
-    if (!log_fp) return;
-
-    fprintf(log_fp, "[%s]_%s_%s\n", time_str, process_name, status);
-    fclose(log_fp);
+    FILE *fp = fopen(path, "a");
+    if (!fp) return;
+    fprintf(fp, "%s\t%s\t%s\n", time_str, process_name, status);
+    fclose(fp);
 }
 
 void list_processes(const char *username, FILE *out) {
@@ -49,113 +48,91 @@ void list_processes(const char *username, FILE *out) {
         fprintf(out, "Failed to open /proc\n");
         return;
     }
-    
-    struct dirent *entry;
-    char time_buf[TIME_BUF_SIZE];
-    get_formatted_time(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S");
-    
-    fprintf(out, "\n=== PROCESS LIST %s ===\n", time_buf);
-    fprintf(out, "%-10s %-30s %-12s %-10s\n", 
-            "PID", "COMMAND", "CPU TIME", "MEM (KB)");
 
+    char hdr_time[TIME_BUF_SIZE];
+    get_formatted_time(hdr_time, sizeof(hdr_time), "%Y-%m-%d %H:%M:%S");
+    fprintf(out, "\n=== PROCESS LIST %s ===\n", hdr_time);
+    fprintf(out, "PID\tCOMMAND\tCPU_TIME\tMEM_KB\n");
+
+    struct dirent *entry;
     while ((entry = readdir(proc)) != NULL) {
         if (!is_numeric(entry->d_name)) continue;
 
-        char path[256];
-        sprintf(path, "/proc/%s/status", entry->d_name);
-        
-        FILE *fp = fopen(path, "r");
-        if (!fp) continue;
-
-        uid_t uid = -1;
-        int matched = 0;
-        char line[256];
-        
-        while (fgets(line, sizeof(line), fp)) {
+        // filter by owner
+        char status_path[256], line[256];
+        snprintf(status_path, sizeof(status_path), "/proc/%s/status", entry->d_name);
+        FILE *sfp = fopen(status_path, "r");
+        if (!sfp) continue;
+        uid_t uid = -1; int matched = 0;
+        while (fgets(line, sizeof(line), sfp)) {
             if (strncmp(line, "Uid:", 4) == 0) {
                 sscanf(line, "Uid:\t%u", &uid);
-                struct passwd *pwd = getpwuid(uid);
-                if (pwd && strcmp(pwd->pw_name, username) == 0) matched = 1;
+                struct passwd *pw = getpwuid(uid);
+                if (pw && strcmp(pw->pw_name, username) == 0) matched = 1;
                 break;
             }
         }
-        fclose(fp);
-        
+        fclose(sfp);
         if (!matched) continue;
 
-        sprintf(path, "/proc/%s/cmdline", entry->d_name);
-        FILE *cmd_fp = fopen(path, "r");
+        // baca cmdline
         char cmd[MAX_CMDLINE_LEN] = "[unknown]";
-        
-        if (cmd_fp) {
-            size_t n = fread(cmd, 1, MAX_CMDLINE_LEN-1, cmd_fp);
-            fclose(cmd_fp);
-            
-            for (size_t i = 0; i < n; i++) {
-                if (cmd[i] == '\0') cmd[i] = ' ';
-            }
+        snprintf(status_path, sizeof(status_path), "/proc/%s/cmdline", entry->d_name);
+        FILE *cfp = fopen(status_path, "r");
+        if (cfp) {
+            size_t n = fread(cmd, 1, MAX_CMDLINE_LEN-1, cfp);
+            fclose(cfp);
+            for (size_t i = 0; i < n; i++) if (cmd[i] == '\0') cmd[i] = ' ';
             cmd[n] = '\0';
-            
-            while (n > 0 && cmd[n-1] == ' ') cmd[--n] = '\0';
         }
 
-        unsigned long utime = 0, stime = 0;
-        sprintf(path, "/proc/%s/stat", entry->d_name);
-        FILE *stat_fp = fopen(path, "r");
-        
-        if (stat_fp) {
-            fscanf(stat_fp, "%*d %*s %*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %lu %lu",
-                   &utime, &stime);
-            fclose(stat_fp);
+        // baca CPU times
+        unsigned long ut = 0, st = 0;
+        snprintf(status_path, sizeof(status_path), "/proc/%s/stat", entry->d_name);
+        FILE *tfp = fopen(status_path, "r");
+        if (tfp) {
+            fscanf(tfp, "%*d %*s %*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %lu %lu",
+                   &ut, &st);
+            fclose(tfp);
         }
 
+        // baca mem (pages)
         int pages = 0;
-        sprintf(path, "/proc/%s/statm", entry->d_name);
-        FILE *mem_fp = fopen(path, "r");
-        
-        if (mem_fp) {
-            fscanf(mem_fp, "%d", &pages);
-            fclose(mem_fp);
+        snprintf(status_path, sizeof(status_path), "/proc/%s/statm", entry->d_name);
+        FILE *mfp = fopen(status_path, "r");
+        if (mfp) {
+            fscanf(mfp, "%d", &pages);
+            fclose(mfp);
         }
 
-        fprintf(out, "%-10s %-30s %-12lu %-10d\n",
-                entry->d_name,
-                cmd,
-                utime + stime,
-                pages * 4);
+        unsigned long cpu_time = ut + st;
+        int mem_kb = pages * (getpagesize()/1024);
+
+        fprintf(out, "%s\t%s\t%lu\t%d\n",
+                entry->d_name, cmd, cpu_time, mem_kb);
 
         log_global_process_status(cmd, "RUNNING");
     }
+
     closedir(proc);
 }
 
 void stop_daemon(const char *username) {
     char pid_path[256];
-    sprintf(pid_path, "/home/ubuntu/debugmon_%s.pid", username);
+    snprintf(pid_path, sizeof(pid_path), "/home/ubuntu/debugmon_%s.pid", username);
 
-    FILE *pid_fp = fopen(pid_path, "r");
-    if (!pid_fp) {
+    FILE *pf = fopen(pid_path, "r");
+    if (!pf) {
         printf("Daemon not running for %s\n", username);
         return;
     }
-    
     pid_t pid;
-    if (fscanf(pid_fp, "%d", &pid) != 1) {
-        fclose(pid_fp);
+    if (fscanf(pf, "%d", &pid) != 1) {
+        fclose(pf);
         printf("Corrupt PID file for %s\n", username);
         return;
     }
-    fclose(pid_fp);
-
-    if (kill(pid, 0) == -1) {
-        if (errno == ESRCH) {
-            printf("Daemon process %d does not exist\n", pid);
-        } else {
-            perror("Process check failed");
-        }
-        remove(pid_path);
-        return;
-    }
+    fclose(pf);
 
     if (kill(pid, SIGTERM) == 0) {
         printf("Stopped daemon for %s (PID %d)\n", username, pid);
@@ -167,106 +144,77 @@ void stop_daemon(const char *username) {
 
 void fail_user(const char *username) {
     DIR *proc = opendir("/proc");
-    if (!proc) {
-        perror("Failed to open /proc");
-        return;
-    }
+    if (!proc) { perror("open /proc"); return; }
 
     char log_path[256];
-    sprintf(log_path, LOG_DIR "debugmon_%s.log", username);
-    FILE *log_fp = fopen(log_path, "a");
-    
-    if (!log_fp) {
-        perror("Failed to open log file");
-        closedir(proc);
-        return;
-    }
+    snprintf(log_path, sizeof(log_path), LOG_DIR "debugmon_%s.log", username);
+    FILE *lf = fopen(log_path, "a");
+    if (!lf) { perror("open log"); closedir(proc); return; }
 
-    char time_buf[TIME_BUF_SIZE];
-    get_formatted_time(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S");
-    fprintf(log_fp, "\n=== FAILED PROCESSES %s ===\n", time_buf);
-    fprintf(log_fp, "%-10s %-30s %-20s\n", "PID", "COMMAND", "STATUS");
+    char tbuf[TIME_BUF_SIZE];
+    get_formatted_time(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S");
+    fprintf(lf, "\n=== FAILED PROCESSES %s ===\n", tbuf);
+    fprintf(lf, "PID\tCOMMAND\tSTATUS\n");
 
     struct dirent *entry;
     while ((entry = readdir(proc)) != NULL) {
         if (!is_numeric(entry->d_name)) continue;
 
-        char path[256];
-        sprintf(path, "/proc/%s/status", entry->d_name);
-        
-        FILE *fp = fopen(path, "r");
-        if (!fp) continue;
-
-        uid_t uid = -1;
-        int matched = 0;
-        char line[256];
-        
-        while (fgets(line, sizeof(line), fp)) {
+        // filter by owner
+        char stpath[256], line[256];
+        snprintf(stpath, sizeof(stpath), "/proc/%s/status", entry->d_name);
+        FILE *sfp = fopen(stpath, "r");
+        if (!sfp) continue;
+        uid_t uid; int matched = 0;
+        while (fgets(line, sizeof(line), sfp)) {
             if (strncmp(line, "Uid:", 4) == 0) {
                 sscanf(line, "Uid:\t%u", &uid);
-                struct passwd *pwd = getpwuid(uid);
-                if (pwd && strcmp(pwd->pw_name, username) == 0) matched = 1;
+                struct passwd *pw = getpwuid(uid);
+                if (pw && strcmp(pw->pw_name, username) == 0) matched = 1;
                 break;
             }
         }
-        fclose(fp);
-
+        fclose(sfp);
         if (!matched) continue;
 
-        sprintf(path, "/proc/%s/cmdline", entry->d_name);
-        FILE *cmd_fp = fopen(path, "r");
+        // baca cmdline
         char cmd[MAX_CMDLINE_LEN] = "[unknown]";
-        
-        if (cmd_fp) {
-            size_t n = fread(cmd, 1, MAX_CMDLINE_LEN-1, cmd_fp);
-            fclose(cmd_fp);
-            
-            for (size_t i = 0; i < n; i++) {
-                if (cmd[i] == '\0') cmd[i] = ' ';
-            }
+        snprintf(stpath, sizeof(stpath), "/proc/%s/cmdline", entry->d_name);
+        FILE *cfp = fopen(stpath, "r");
+        if (cfp) {
+            size_t n = fread(cmd, 1, MAX_CMDLINE_LEN-1, cfp);
+            fclose(cfp);
+            for (size_t i = 0; i < n; i++) if (cmd[i] == '\0') cmd[i] = ' ';
             cmd[n] = '\0';
-            
-            while (n > 0 && cmd[n-1] == ' ') cmd[--n] = '\0';
         }
 
         pid_t pid = atoi(entry->d_name);
-        int kill_result = kill(pid, SIGKILL);
-        
-        if (kill_result == 0) {
-            fprintf(log_fp, "%-10d %-30s %-20s\n", pid, cmd, "TERMINATED");
+        if (kill(pid, SIGKILL) == 0) {
+            fprintf(lf, "%d\t%s\tTERMINATED\n", pid, cmd);
             log_global_process_status(cmd, "FAILED");
         } else {
             if (errno == ESRCH) {
-                fprintf(log_fp, "%-10d %-30s %-20s\n", pid, cmd, "ALREADY DEAD");
+                fprintf(lf, "%d\t%s\tALREADY_DEAD\n", pid, cmd);
             } else {
-                fprintf(log_fp, "%-10d %-30s %-20s (%s)\n", 
-                        pid, cmd, "FAILED", strerror(errno));
+                fprintf(lf, "%d\t%s\tFAILED\n", pid, cmd);
             }
             log_global_process_status(cmd, "FAILED");
         }
     }
 
+    fclose(lf);
     closedir(proc);
-    fclose(log_fp);
     printf("All processes for %s terminated and logged\n", username);
 }
 
 void daemon_mode(const char *username) {
     pid_t pid = fork();
-    if (pid < 0) {
-        perror("Fork failed");
-        exit(EXIT_FAILURE);
-    }
-    
+    if (pid < 0) { perror("fork"); exit(1); }
     if (pid > 0) {
-        char pid_path[256];
-        sprintf(pid_path, "/home/ubuntu/debugmon_%s.pid", username);
-        
-        FILE *pid_fp = fopen(pid_path, "w");
-        if (pid_fp) {
-            fprintf(pid_fp, "%d", pid);
-            fclose(pid_fp);
-        }
+        char pidfile[256];
+        snprintf(pidfile, sizeof(pidfile), "/home/ubuntu/debugmon_%s.pid", username);
+        FILE *pf = fopen(pidfile, "w");
+        if (pf) { fprintf(pf, "%d", pid); fclose(pf); }
         printf("Daemon started with PID %d\n", pid);
         return;
     }
@@ -277,14 +225,10 @@ void daemon_mode(const char *username) {
     close(STDERR_FILENO);
 
     while (1) {
-        char log_path[256];
-        sprintf(log_path, LOG_DIR "debugmon_%s.log", username);
-        
-        FILE *log_fp = fopen(log_path, "a");
-        if (log_fp) {
-            list_processes(username, log_fp);
-            fflush(log_fp);
-            fclose(log_fp);
+        FILE *lf = fopen(LOG_DIR "debugmon.log", "a");
+        if (lf) {
+            list_processes(username, lf);
+            fclose(lf);
         }
         sleep(5);
     }
@@ -292,104 +236,102 @@ void daemon_mode(const char *username) {
 
 void revert_user(const char *username) {
     char log_path[256];
-    sprintf(log_path, LOG_DIR "debugmon_%s.log", username);
+    snprintf(log_path, sizeof(log_path), LOG_DIR "debugmon_%s.log", username);
 
-    FILE *log_fp = fopen(log_path, "r");
-    if (!log_fp) {
-        printf("No log file found for %s\n", username);
+    FILE *lf = fopen(log_path, "r");
+    if (!lf) {
+        printf("No log file for %s\n", username);
+        return;
+    }
+    FILE *tmp = tmpfile();
+    if (!tmp) {
+        perror("tmpfile");
+        fclose(lf);
         return;
     }
 
-    char time_buf[TIME_BUF_SIZE];
-    get_formatted_time(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S");
+    char line[2048], orig[2048];
+    int in_failed = 0, reverted = 0;
 
-    FILE *temp_fp = tmpfile();
-    int in_failed_section = 0;
-    int reverted_count = 0;
-    char line[512];
+    while (fgets(line, sizeof(line), lf)) {
+        // simpan salinan utuh sebelum strtok
+        strcpy(orig, line);
 
-    while (fgets(line, sizeof(line), log_fp)) {
         if (strstr(line, "=== FAILED PROCESSES")) {
-            in_failed_section = 1;
+            in_failed = 1;
+            fputs(orig, tmp);
             continue;
         }
 
-        if (in_failed_section) {
-            if (strstr(line, "PID") || strlen(line) < 10) continue;
-
-            char pid_str[32], cmd[256], status[256];
-            pid_str[0] = cmd[0] = status[0] = '\0';
-
-            int ret = sscanf(line, "%31s\t%255[^\t]\t%255[^\n]", pid_str, cmd, status);
-            if (ret < 2) continue;
-
-            // Trim trailing whitespace
-            int len = strlen(cmd);
-            while (len > 0 && isspace((unsigned char)cmd[len - 1])) {
-                cmd[len - 1] = '\0';
-                len--;
+        if (in_failed) {
+            // lewati header kolom dan baris kosong
+            if (strncmp(line, "PID\tCOMMAND\tSTATUS", 19) == 0 || line[0] == '\n') {
+                fputs(orig, tmp);
+                continue;
             }
 
-            // Debug print to stderr
-            fprintf(stderr, "Revert command: '%s'\n", cmd);
+            // parsing PID dan COMMAND saja
+            char *saveptr;
+            char *pid_tok = strtok_r(line, "\t\n", &saveptr);
+            char *cmd_tok = strtok_r(NULL, "\t\n", &saveptr);
+            // (status ada di strtok_r(NULL,...), tapi kita abaikan)
 
-            pid_t pid = fork();
-            if (pid == 0) {
-                execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
-                perror("execl failed");
-                exit(EXIT_FAILURE);
-            } else if (pid > 0) {
-                reverted_count++;
-            } else {
-                perror("fork failed");
+            if (pid_tok && cmd_tok && is_numeric(pid_tok)) {
+                pid_t c = fork();
+                if (c == 0) {
+                    execl("/bin/sh", "sh", "-c", cmd_tok, (char *)NULL);
+                    perror("execl");
+                    exit(1);
+                } else if (c > 0) {
+                    waitpid(c, NULL, 0);
+                    reverted++;
+                } else {
+                    perror("fork");
+                }
             }
+            fputs(orig, tmp);
+        } else {
+            fputs(orig, tmp);
         }
-
-        fputs(line, temp_fp);
-    }
-    fclose(log_fp);
-
-    rewind(temp_fp);
-    log_fp = fopen(log_path, "w");
-    while (fgets(line, sizeof(line), temp_fp)) {
-        fputs(line, log_fp);
     }
 
-    fprintf(log_fp, "\n=== REVERT PROCESSES %s ===\n", time_buf);
-    fprintf(log_fp, "Restored %d processes\n", reverted_count);
+    fclose(lf);
 
-    fclose(log_fp);
-    fclose(temp_fp);
-    printf("Successfully reverted %d processes for %s\n", reverted_count, username);
+    // tambahkan ringkasan revert di akhir
+    char tbuf[TIME_BUF_SIZE];
+    get_formatted_time(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S");
+    fprintf(tmp, "\n=== REVERT PROCESSES %s ===\nRestored %d processes\n",
+            tbuf, reverted);
+
+    // tulis kembali ke file asli
+    rewind(tmp);
+    lf = fopen(log_path, "w");
+    if (lf) {
+        while (fgets(line, sizeof(line), tmp)) {
+            fputs(line, lf);
+        }
+        fclose(lf);
+    }
+    fclose(tmp);
+
+    printf("Successfully reverted %d processes for %s\n", reverted, username);
 }
 
 int main(int argc, char *argv[]) {
-    // Tangani SIGCHLD untuk menghindari zombie
     signal(SIGCHLD, SIG_IGN);
 
     if (argc < 3) {
         printf("Usage: %s <list|daemon|stop|fail|revert> <username>\n", argv[0]);
         return 1;
     }
+    const char *cmd = argv[1], *user = argv[2];
 
-    if (strcmp(argv[1], "list") == 0) {
-        list_processes(argv[2], stdout);
-    }
-    else if (strcmp(argv[1], "daemon") == 0) {
-        daemon_mode(argv[2]);
-    }
-    else if (strcmp(argv[1], "stop") == 0) {
-        stop_daemon(argv[2]);
-    }
-    else if (strcmp(argv[1], "fail") == 0) {
-        fail_user(argv[2]);
-    }
-    else if (strcmp(argv[1], "revert") == 0) {
-        revert_user(argv[2]);
-    }
-    else {
-        printf("Invalid command\n");
-    }
+    if      (strcmp(cmd, "list") == 0)   list_processes(user, stdout);
+    else if (strcmp(cmd, "daemon") == 0) daemon_mode(user);
+    else if (strcmp(cmd, "stop") == 0)   stop_daemon(user);
+    else if (strcmp(cmd, "fail") == 0)   fail_user(user);
+    else if (strcmp(cmd, "revert") == 0) revert_user(user);
+    else                                  printf("Invalid command\n");
 
     return 0;
 }
