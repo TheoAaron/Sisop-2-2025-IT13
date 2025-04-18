@@ -200,6 +200,272 @@ Program dapat dijalankan dengan opsi berikut:
 
 # Soal 2
 
+## ⚙️ Fungsi Utama <a name="fungsi-utama-starterkit"></a>
+
+### 1. `daemon_loop()`
+```
+void daemon_loop() {
+    pid_t pid = fork();
+    if (pid < 0) exit(EXIT_FAILURE);
+    if (pid > 0) {
+        FILE *pidf = fopen(PID_FILE, "w");
+        fprintf(pidf, "%d", pid);
+        fclose(pidf);
+        return;
+    }
+    setsid();
+    chdir(".");
+    fclose(stdin);
+    fclose(stdout);
+    fclose(stderr);
+
+    while (1) {
+        FILE *flag = fopen(".decrypt_now", "r");
+        if (flag) {
+            fclose(flag);
+            remove(".decrypt_now");
+            DIR *d = opendir(STARTER_DIR);
+            if (d) {
+                struct dirent *dir;
+                while ((dir = readdir(d)) != NULL) {
+                    if (dir->d_type == DT_REG && is_base64_filename(dir->d_name)) {
+                        char old_path[MAX_PATH_LEN], new_path[MAX_PATH_LEN];
+                        snprintf(old_path, MAX_PATH_LEN, "%s/%s", STARTER_DIR, dir->d_name);
+                        char *decoded = base64_decode(dir->d_name);
+                        if (strlen(decoded) == 0) continue;
+                        snprintf(new_path, MAX_PATH_LEN, "%s/%s", STARTER_DIR, decoded);
+                        rename(old_path, new_path);
+                    }
+                }
+                closedir(d);
+                char msg[MAX_LOG_LEN];
+                snprintf(msg, sizeof(msg), "Decryption triggered by user.");
+                write_log(msg);
+            }
+        }
+        sleep(5);
+    }
+}
+```
+Pada kode ini, saya pertama-tama melakukan proses forking untuk proses daemon. Jika sukses, maka menyimpan PID daemon ke `/tmp/starterkit.pid`. Lalu saya menggunakan teknik double-fork untuk detach dari terminal dan melakukan loop infinite pada daemon. Lalu dalam loop saya membuat sebuah temporary file dan mengecek keberadaan file tersebut setiap 5 detik untuk mengecek apakah file valid atau tidak. Kemudian saya mencatat setiap aktivitas yang terjadi ke activity.log
+
+### 2. `encrypt_and_move()` dan `decrypt_and_move()`
+```
+void encrypt_and_move(const char *src_path, const char *dest_path) {
+    FILE *src = fopen(src_path, "rb");
+    FILE *dst = fopen(dest_path, "wb");
+    if (!src || !dst) return;
+
+    fwrite(ENC_HEADER, 1, ENC_HEADER_LEN, dst);
+    int ch;
+    while ((ch = fgetc(src)) != EOF) {
+        fputc(ch ^ 0xAA, dst);
+    }
+
+    fclose(src);
+    fclose(dst);
+    remove(src_path);
+}
+
+void decrypt_and_move(const char *src_path, const char *dest_path) {
+    FILE *src = fopen(src_path, "rb");
+    FILE *dst = fopen(dest_path, "wb");
+    if (!src || !dst) return;
+
+    fseek(src, ENC_HEADER_LEN, SEEK_SET);
+    int ch;
+    while ((ch = fgetc(src)) != EOF) {
+        fputc(ch ^ 0xAA, dst);
+    }
+
+    fclose(src);
+    fclose(dst);
+    remove(src_path);
+}
+```
+Pada kode ini, saya ingin mendekripsi file yang terenkripsi. Hal ini dapat dilakukan dengan pertama mebuat sebuah file sumber untuk menyimpan file yang terenkripsi dan sebuah file tujuan untuk menaruh hasil dari file yang telah di dekripsi. Pertama-tama saya membuka file sumber dalam mode baca biner, dan membuat file tujuan dalam mode biner. Jika salah satu gagal terbuka, maka fungsi langsung berhenti.
+
+Pada proses enkripsi, saya pertama-tama menambahkan header enkripsi sebagai penanda bahwa file tersebut terenkripsi. Lalu, saya membaca file sumber per byte (`fgetc(src)`) dan saya mengenkripsi setiap byte dengan operasi XOR terhadap `0xAA` hingga akhir dari file tersebut. Kemudian, saya menutup kedua file dan menghapus file sumbernya (`remove(src_path)`). 
+```
+Contoh Enkripsi:
+    Byte asli: 01000001 (huruf 'A')
+    XOR dengan 0xAA:
+    01000001 ^ 10101010 = 11101011 (hasil enkripsi).
+```
+Pada proses dekripsi, saya pertama-tama membuka file sumber, tetapi file sumber kali ini sudah terenkripsi. Lalu, saya membaca file sumber per byte setelah header (`ENCRYPTED` yang hanya digunakan sebagai penanda) dan mendekripsi setiap byte dengan operasi XOR terhadap `0xAA`. Kemudian, saya menulis hasil dekripsi ke file tujuan yang telah didekripsi lalu menutup kedua file dan menghaps file sumbernya.
+```
+Contoh Dekripsi:
+    Byte terenkripsi: 11101011
+    XOR dengan 0xAA:
+    11101011 ^ 10101010 = 01000001 (huruf 'A' asli).
+```
+
+### 3. `move_file()`
+```
+void move_file(const char *from_dir, const char *to_dir, int logmove) {
+    DIR *d = opendir(from_dir);
+    if (!d) return;
+    struct dirent *dir;
+    while ((dir = readdir(d)) != NULL) {
+        if (dir->d_type == DT_REG) {
+            char old_path[MAX_PATH_LEN], new_path[MAX_PATH_LEN];
+            snprintf(old_path, MAX_PATH_LEN, "%s/%s", from_dir, dir->d_name);
+            snprintf(new_path, MAX_PATH_LEN, "%s/%s", to_dir, dir->d_name);
+
+            if (strcmp(to_dir, QUARANTINE_DIR) == 0) {
+                if (!is_encrypted(old_path))
+                    encrypt_and_move(old_path, new_path);
+                else
+                    rename(old_path, new_path);
+            } else {
+                if (is_encrypted(old_path))
+                    decrypt_and_move(old_path, new_path);
+                else
+                    rename(old_path, new_path);
+            }
+
+            if (logmove) {
+                char msg[MAX_LOG_LEN];
+                snprintf(msg, MAX_LOG_LEN, "%s - Successfully moved to %s directory.",
+                         dir->d_name, strcmp(to_dir, QUARANTINE_DIR) == 0 ? "quarantine" : "starter kit");
+                write_log(msg);
+            }
+        }
+    }
+    closedir(d);
+}
+```
+Pada kode ini, saya membuat sebuah program untuk memindahkan file dari suatu lokasi tertentu ke lokasi lainnya. Terdapat beberapa parameter input pada program tersebut:
+```
+Parameter Input
+    from_dir: Direktori sumber file.
+    to_dir: Direktori tujuan file.
+    logmove: Flag untuk menentukan apakah perlu mencatat log (1 = ya, 0 = tidak).
+```
+Pertama-tama, saya membuka direktori sumber dan mengiterasikan tiap file dalam direktori tersebut lalu membuat path sumber dan tujuannya. Program ini digunakan dalam dua fitur dalam keseluruhan program ini, yaitu ketika user ingin melakukan aksi `quarantine` dan `return`.
+
+### 4. `eradicate_files()`
+```
+void eradicate_files() {
+    DIR *d = opendir(QUARANTINE_DIR);
+    if (!d) return;
+    struct dirent *dir;
+    while ((dir = readdir(d)) != NULL) {
+        if (dir->d_type == DT_REG) {
+            char filepath[MAX_PATH_LEN], msg[MAX_LOG_LEN];
+            snprintf(filepath, MAX_PATH_LEN, "%s/%s", QUARANTINE_DIR, dir->d_name);
+            remove(filepath);
+            snprintf(msg, MAX_LOG_LEN, "%s - Successfully deleted.", dir->d_name);
+            write_log(msg);
+        }
+    }
+    closedir(d);
+}
+```
+
+### 5. `write_log()`
+```
+void write_log(const char *msg) {
+    FILE *log = fopen(LOG_FILE, "a");
+    if (!log) return;
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    char timestamp[64];
+    strftime(timestamp, sizeof(timestamp), "%d-%m-%Y][%H:%M:%S", t);
+    fprintf(log, "[%s] - %s\n", timestamp, msg);
+    fclose(log);
+}
+```
+
+### 6. `Download_and_Extract()`
+```
+void download_and_extract() {
+    struct stat st = {0};
+
+    if (stat("starter_kit", &st) == 0 && S_ISDIR(st.st_mode)) {
+        printf("📂 Folder 'starter_kit' sudah ada, skip download.\n");
+        return;
+    }
+
+    printf("⬇️  Mengunduh Clues.zip...\n");
+    char *wget_args[] = {"wget", "-q", "--show-progress", "-O", ZIP_NAME, ZIP_URL, NULL};
+    run_exec("wget", wget_args);
+
+    printf("📦 Mengekstrak Clues.zip ke folder starter_kit...\n");
+    mkdir("starter_kit", 0755);
+    char *unzip_args[] = {"unzip", "-o", ZIP_NAME, "-d", "starter_kit", NULL};
+    run_exec("unzip", unzip_args);
+
+    printf("❌ Menghapus file zip...\n");
+    if (remove(ZIP_NAME) == 0) {
+        printf("🟢 Zip file berhasil dihapus.\n");
+    } else {
+        perror("🛑 Gagal menghapus file zip");
+    }
+}
+```
+
+### 7. `shutdown_daemon()`
+```
+void shutdown_daemon() {
+    FILE *pidf = fopen(PID_FILE, "r");
+    if (!pidf) {
+        printf("Daemon not running.\n");
+        return;
+    }
+    
+    int pid;
+    if (fscanf(pidf, "%d", &pid) != 1) {
+        fclose(pidf);
+        printf("Invalid PID file.\n");
+        return;
+    }
+    fclose(pidf);
+    
+    if (kill(pid, SIGTERM) == 0) {
+        char msg[MAX_LOG_LEN];
+        snprintf(msg, MAX_LOG_LEN, "Successfully shut off decryption process with PID %d.", pid);
+        write_log(msg);
+        remove(PID_FILE);
+        printf("Daemon (PID %d) shutdown successfully.\n", pid);
+    } else {
+        printf("Failed to shutdown daemon (PID %d). Error: %s\n", pid, strerror(errno));
+    }
+}
+```
+
+## Fungsi Tambahan
+
+### 1. `Download_and_extract()`
+```
+void download_and_extract() {
+    struct stat st = {0};
+
+    if (stat("starter_kit", &st) == 0 && S_ISDIR(st.st_mode)) {
+        printf("📂 Folder 'starter_kit' sudah ada, skip download.\n");
+        return;
+    }
+
+    printf("⬇️  Mengunduh Clues.zip...\n");
+    char *wget_args[] = {"wget", "-q", "--show-progress", "-O", ZIP_NAME, ZIP_URL, NULL};
+    run_exec("wget", wget_args);
+
+    printf("📦 Mengekstrak Clues.zip ke folder starter_kit...\n");
+    mkdir("starter_kit", 0755);
+    char *unzip_args[] = {"unzip", "-o", ZIP_NAME, "-d", "starter_kit", NULL};
+    run_exec("unzip", unzip_args);
+
+    printf("❌ Menghapus file zip...\n");
+    if (remove(ZIP_NAME) == 0) {
+        printf("🟢 Zip file berhasil dihapus.\n");
+    } else {
+        perror("🛑 Gagal menghapus file zip");
+    }
+}
+```
+Pada kode ini, sama seperti dengan kode pada nomor 1, ketika file dirun, akan melakukan pengecekan terhadap folder "starter_kit". Jika ada, maka akan melewati proses download dan memberitahu user bahwa folder sudah pernah didownload. Jika tidak ada, maka akan melakukan download dari file yang telah disiapkan, unzip file yang didownload, memasukkan file yang telah diunsip ke dalam folder bernama "starter_kit" dan menghapus file zip awal.
+
+### 2. 
 
 # Soal 3
 
