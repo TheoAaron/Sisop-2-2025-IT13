@@ -15,12 +15,25 @@
 #define STARTER_DIR "starter_kit"
 #define QUARANTINE_DIR "quarantine"
 #define LOG_FILE "activity.log"
-#define PID_FILE ".pid"
+#define PID_FILE "/tmp/starterkit.pid"
 #define MAX_PATH_LEN 512
 #define MAX_LOG_LEN 512
 #define MAX_NAME_LEN 256
 #define ENC_HEADER "ENCRYPTED"
 #define ENC_HEADER_LEN 9
+#define ZIP_NAME "starter_kit.zip"
+#define ZIP_URL "https://drive.google.com/uc?export=download&id=1_5GxIGfQr3mNKuavJbte_AoRkEQLXSKS"
+
+void run_exec(char *cmd, char *argv[]) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        execvp(cmd, argv);
+        perror("exec failed");
+        exit(EXIT_FAILURE);
+    } else {
+        wait(NULL);
+    }
+}
 
 void write_log(const char *msg) {
     FILE *log = fopen(LOG_FILE, "a");
@@ -31,6 +44,31 @@ void write_log(const char *msg) {
     strftime(timestamp, sizeof(timestamp), "%d-%m-%Y][%H:%M:%S", t);
     fprintf(log, "[%s] - %s\n", timestamp, msg);
     fclose(log);
+}
+
+void download_and_extract() {
+    struct stat st = {0};
+
+    if (stat("starter_kit", &st) == 0 && S_ISDIR(st.st_mode)) {
+        printf("📂 Folder 'starter_kit' sudah ada, skip download.\n");
+        return;
+    }
+
+    printf("⬇️  Mengunduh Clues.zip...\n");
+    char *wget_args[] = {"wget", "-q", "--show-progress", "-O", ZIP_NAME, ZIP_URL, NULL};
+    run_exec("wget", wget_args);
+
+    printf("📦 Mengekstrak Clues.zip ke folder starter_kit...\n");
+    mkdir("starter_kit", 0755);
+    char *unzip_args[] = {"unzip", "-o", ZIP_NAME, "-d", "starter_kit", NULL};
+    run_exec("unzip", unzip_args);
+
+    printf("❌ Menghapus file zip...\n");
+    if (remove(ZIP_NAME) == 0) {
+        printf("🟢 Zip file berhasil dihapus.\n");
+    } else {
+        perror("🛑 Gagal menghapus file zip");
+    }
 }
 
 char* base64_decode(const char* input) {
@@ -228,19 +266,26 @@ void eradicate_files() {
 void shutdown_daemon() {
     FILE *pidf = fopen(PID_FILE, "r");
     if (!pidf) {
-        printf("Daemon not found.");
+        printf("Daemon not running.\n");
         return;
     }
+    
     int pid;
-    fscanf(pidf, "%d", &pid);
+    if (fscanf(pidf, "%d", &pid) != 1) {
+        fclose(pidf);
+        printf("Invalid PID file.\n");
+        return;
+    }
     fclose(pidf);
+    
     if (kill(pid, SIGTERM) == 0) {
         char msg[MAX_LOG_LEN];
         snprintf(msg, MAX_LOG_LEN, "Successfully shut off decryption process with PID %d.", pid);
         write_log(msg);
         remove(PID_FILE);
+        printf("Daemon (PID %d) shutdown successfully.\n", pid);
     } else {
-        printf("Failed to shutdown daemon.");
+        printf("Failed to shutdown daemon (PID %d). Error: %s\n", pid, strerror(errno));
     }
 }
 
@@ -254,9 +299,23 @@ void print_usage() {
 }
 
 int main(int argc, char *argv[]) {
-    daemon_loop();
-    mkdir(STARTER_DIR, 0755);
+
+    if (argc == 2 && strcmp(argv[1], "--shutdown") == 0) {
+        shutdown_daemon();
+        return 0;
+    }
+
+    struct stat st;
+    if (stat(PID_FILE, &st) == -1) {
+        daemon_loop();
+    }
+
     mkdir(QUARANTINE_DIR, 0755);
+
+    if (argc == 1) {
+        download_and_extract();
+        return 0;
+    }
 
     if (argc != 2) {
         print_usage();
@@ -272,8 +331,6 @@ int main(int argc, char *argv[]) {
         move_file(QUARANTINE_DIR, STARTER_DIR, 1);
     } else if (strcmp(argv[1], "--eradicate") == 0) {
         eradicate_files();
-    } else if (strcmp(argv[1], "--shutdown") == 0) {
-        shutdown_daemon();
     } else {
         print_usage();
     }
