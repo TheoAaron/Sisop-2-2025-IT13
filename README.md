@@ -342,7 +342,7 @@ Parameter Input
     to_dir: Direktori tujuan file.
     logmove: Flag untuk menentukan apakah perlu mencatat log (1 = ya, 0 = tidak).
 ```
-Pertama-tama, saya membuka direktori sumber dan mengiterasikan tiap file dalam direktori tersebut lalu membuat path sumber dan tujuannya. Program ini digunakan dalam dua fitur dalam keseluruhan program ini, yaitu ketika user ingin melakukan aksi `quarantine` dan `return`.
+Pertama-tama, saya membuka direktori sumber dan mengiterasikan tiap file dalam direktori tersebut lalu membuat path sumber dan tujuannya. Program ini digunakan dalam dua fitur dalam keseluruhan program ini, yaitu ketika user ingin melakukan aksi `quarantine` dan `return`. Jika user memasukkan input quarantine, maka akan mengecek apakah sudah terenkripsi atau belum, jika belum, maka akan memanggil fungsi `encrypt_and_move()`, dan jika sudah, cukup pindahkan dengan `rename()`. Jika user memasukkan input return, maka akan mengecek file apakah terenkripsi atau belum, jika sudah, maka akan memanggil fungsi `decrypt_and_move()`, dan jika tidak, maka cukup dipindahkan menggunakan `rename()`. Semua kativitas ini akan dicatat pada activity.log.
 
 ### 4. `eradicate_files()`
 ```
@@ -362,6 +362,7 @@ void eradicate_files() {
     closedir(d);
 }
 ```
+Pada kode ini, saya membuat sebuah program untuk menghapus secara permanen semua file yang berada dalam foldere "quarantine". Pertama, kita harus membuka folder quarantine itu sendiri dan mengiterasikan tiap file dalam folder tersebut. Lalu, kita akan membentuk suatu file path dan menghapus semua file tersebut secara permanen. Kemudian, kita akan mencatatnya ke dalam activity.log.
 
 ### 5. `write_log()`
 ```
@@ -376,36 +377,9 @@ void write_log(const char *msg) {
     fclose(log);
 }
 ```
+Pada kode ini, saya membuat sebuah file untuk menyimpan semua aktivitas program dalam sebuah file bernama "activity.log". Pertama, saya membuat file bernama "activity.log" dan membuka file tersebut. Lalu, saya menyimpan data waktu secara langsung dalam variabel now menggunakan function `time()` dan `localtime()`. Saya juga membuat sebuah varibel kosong dan memisahkan tiap-tiap elemen dari waktu (tahun, bulan, tanggal. jam, menit, dan detik) dan menyimpannya dalam variabel "timestamp". Kemudian, saya sisa menyesuaikan format waktu dan memprint berdasarkan format yang benar.
 
-### 6. `Download_and_Extract()`
-```
-void download_and_extract() {
-    struct stat st = {0};
-
-    if (stat("starter_kit", &st) == 0 && S_ISDIR(st.st_mode)) {
-        printf("📂 Folder 'starter_kit' sudah ada, skip download.\n");
-        return;
-    }
-
-    printf("⬇️  Mengunduh Clues.zip...\n");
-    char *wget_args[] = {"wget", "-q", "--show-progress", "-O", ZIP_NAME, ZIP_URL, NULL};
-    run_exec("wget", wget_args);
-
-    printf("📦 Mengekstrak Clues.zip ke folder starter_kit...\n");
-    mkdir("starter_kit", 0755);
-    char *unzip_args[] = {"unzip", "-o", ZIP_NAME, "-d", "starter_kit", NULL};
-    run_exec("unzip", unzip_args);
-
-    printf("❌ Menghapus file zip...\n");
-    if (remove(ZIP_NAME) == 0) {
-        printf("🟢 Zip file berhasil dihapus.\n");
-    } else {
-        perror("🛑 Gagal menghapus file zip");
-    }
-}
-```
-
-### 7. `shutdown_daemon()`
+### 6. `shutdown_daemon()`
 ```
 void shutdown_daemon() {
     FILE *pidf = fopen(PID_FILE, "r");
@@ -433,6 +407,7 @@ void shutdown_daemon() {
     }
 }
 ```
+Pada kode ini, saya membuat sebuah program untuk melakukan shutdown pada program daemon yang sedang berjalan dan membersihkan file PID yang tersimpan. Pertama, kita akan membaca file PID pada program kita (`/tmp/starterkit.pid`). Jika tidak terbuka, maka artinya program daemon sedang tidak berjalan dan akan mengeluarkan pesan daemon tidak berjalan. Lalu, program akan melakukan parsing PID untuk mengecek apakah format PID benar atau salah. Jika salah, akan mengeluarkan pesan error. Kemudian, program akan mengirimkan sinyal shutdown (SIGTERM) ke proses daemon. Jika berhasil, program akan menghapus file PID, menampilkan pesan sukses, dan mencatatnya ke activity.log. Jika tidak, maka akan mengeluarkan pesan eror.
 
 ## Fungsi Tambahan
 
@@ -465,7 +440,111 @@ void download_and_extract() {
 ```
 Pada kode ini, sama seperti dengan kode pada nomor 1, ketika file dirun, akan melakukan pengecekan terhadap folder "starter_kit". Jika ada, maka akan melewati proses download dan memberitahu user bahwa folder sudah pernah didownload. Jika tidak ada, maka akan melakukan download dari file yang telah disiapkan, unzip file yang didownload, memasukkan file yang telah diunsip ke dalam folder bernama "starter_kit" dan menghapus file zip awal.
 
-### 2. 
+### 2. `base64_decode()`
+```
+char* base64_decode(const char* input) {
+    static char output[MAX_NAME_LEN];
+    memset(output, 0, sizeof(output));
+
+    int pipefd[2];
+    if (pipe(pipefd) == -1) return NULL;
+
+    pid_t pid = fork();
+    if (pid == -1) return NULL;
+
+    if (pid == 0) {
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        close(pipefd[1]);
+
+        char *argv[] = {"base64", "-d", NULL};
+        char *envp[] = {NULL};
+
+        int inpipe[2];
+        pipe(inpipe);
+        pid_t inpid = fork();
+        if (inpid == 0) {
+            close(inpipe[1]);
+            dup2(inpipe[0], STDIN_FILENO);
+            close(inpipe[0]);
+            execve("/usr/bin/base64", argv, envp);
+            exit(1);
+        } else {
+            close(inpipe[0]);
+            write(inpipe[1], input, strlen(input));
+            close(inpipe[1]);
+            waitpid(inpid, NULL, 0);
+            exit(0);
+        }
+    } else {
+        close(pipefd[1]);
+        read(pipefd[0], output, MAX_NAME_LEN - 1);
+        close(pipefd[0]);
+        waitpid(pid, NULL, 0);
+        output[strcspn(output, "\r\n")] = 0;
+        return output;
+    }
+}
+```
+Kode ini menggunakan sebuah function dalam sistem `/usr/bin/base64` untuk mendekode file yang terenkripsi.
+
+## REVISI
+Terdapat 2 kesalahan yang terdapat ketika demo, yaitu:
+* starterkit tidak melakukan download zip ketika program dijalankan
+* starterkit shutdown bener2 shutdown process
+
+## Solusi
+
+- Untuk solusi download file zip, saya sudah menambahkan kode untuk mendownload zip secara langsung dan melakukan unzip hingga menghapus file zip awal, yaitu sebagai berikut:
+```
+void download_and_extract() {
+    struct stat st = {0};
+
+    if (stat("starter_kit", &st) == 0 && S_ISDIR(st.st_mode)) {
+        printf("📂 Folder 'starter_kit' sudah ada, skip download.\n");
+        return;
+    }
+
+    printf("⬇️  Mengunduh Clues.zip...\n");
+    char *wget_args[] = {"wget", "-q", "--show-progress", "-O", ZIP_NAME, ZIP_URL, NULL};
+    run_exec("wget", wget_args);
+
+    printf("📦 Mengekstrak Clues.zip ke folder starter_kit...\n");
+    mkdir("starter_kit", 0755);
+    char *unzip_args[] = {"unzip", "-o", ZIP_NAME, "-d", "starter_kit", NULL};
+    run_exec("unzip", unzip_args);
+
+    printf("❌ Menghapus file zip...\n");
+    if (remove(ZIP_NAME) == 0) {
+        printf("🟢 Zip file berhasil dihapus.\n");
+    } else {
+        perror("🛑 Gagal menghapus file zip");
+    }
+}
+```
+
+- Untuk solusi kesalahan kedua, ternyata path file pid yang dideklarasikan tidak sesuai dengan yang dipakai di fungsi lain.
+
+Pada fungsi `daemon_loop()`:
+```
+FILE *pidf = fopen(PID_FILE, "w"); // <--- PID_FILE = ".pid"
+```
+Sedangkan pada fungsi `shutdown_daemon()`:
+```
+FILE *fp = fopen("/tmp/starterkit.pid", "r"); // <--- ❌ Mismatch
+```
+
+- Solusinya sisa mengubah kode define diatas menjadi
+```
+#define PID_FILE "/tmp/starterkit.pid"
+```
+Sehingga, outputnya ketika kita melakukan `ps aux | grep starterkit` untuk mengecek keaktifan program berubah dari:
+
+![Screenshot 2025-04-17 222118](https://github.com/user-attachments/assets/bbcdd3ee-f114-4b1b-a562-b8fab7180ade)
+
+menjadi:
+
+![Screenshot 2025-04-18 164058](https://github.com/user-attachments/assets/c255227c-8e95-4fea-88fd-4705a2ef9fd3)
 
 # Soal 3
 
