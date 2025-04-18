@@ -547,6 +547,7 @@ menjadi:
 ![Screenshot 2025-04-18 164058](https://github.com/user-attachments/assets/c255227c-8e95-4fea-88fd-4705a2ef9fd3)
 
 # Soal 3
-
+![Image](https://github.com/user-attachments/assets/1921a38f-d315-4801-ae06-188992c9c04a)
+kode di atas menjelaskan fungsi generate hash, untuk set random hash hexadecimal
 
 # Soal 4
